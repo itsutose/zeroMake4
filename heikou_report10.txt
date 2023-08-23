@@ -1,0 +1,61 @@
+学籍番号: 202320659
+名前: 山口泰生
+課題番号: 10
+題名: トランザクション，Argus，投機的・楽観的実行
+
+問題(1001)
+T1: 口座1から100円を引き出す。
+T2: 口座1から80円を引き出す。
+T3: 口座1から200円を引き出す。
+
+
+・T1 → T2，T2 → T1の実行：トランザクション実行後の口座1の残高は20円．
+・T3の実行：トランザクション実行後の口座1の残高は0円．
+
+問題(1002) Argus
+以下にトランザクションを実行するコードの素片を抜き出したものを記す．
+また，暗黙的にbegin_transactionの操作が行われる行の先頭に#印，
+暗黙的にcommitの操作が行われる行の先頭に$印，
+暗黙的にabortの操作が行われる行の先頭に%印をそれぞれつけた．
+
+  24:#   total = handler () returns (int) 
+
+  31:$     return (sum)
+  32:   end total
+  33: 
+  34:#   open = handler () returns (account_number)
+
+  39:$     return (a)
+  40:   end open
+  41: 
+  42:#   close = handler (a: account_number) signals (no_such_acct, positive_balance)
+
+  46:%       if b[i].acct.bal > 0 then signal positive_balance end
+
+  49:$       return
+  50:     end
+  51:%     signal no_such_acct
+  52:   end close
+
+  61:#   deposit = handler (a: account_number, amt: int) signals (no_such_acct, 
+  62:                                                                 negativ_amount)
+  63:%     if amt < 0 then signal negative_amount end
+  64:%     ainfo: acct_info := lookup(a) resignal no_such_acct
+  65:     ainfo.bal := ainfo.bal + amt
+  66:   end deposit
+  67: 
+  68:#   withdraw = handler (a: account_number, amt: int) signals (no_such_acct, 
+  69:                                          negative_amount, insufficient_funds)
+  70:%     if amt < 0 then signal negative_amount end
+  71:%     ainfo: acct_info := lookup(a) resignal no_such_acct
+  72:%     if ainfo.bal < amt then signal insufficient_funds end
+  73:     ainfo.bal := ainfo.bal - amt
+  74:   end withdraw
+
+問題(1003) 投機的実行とトランザクション
+投機的処理実行が可能な箇所は以下の部分である．
+x = time_consuming_computation();
+
+この投機的実行の実装に必要なトランザクションの実装と類似の技術はabortとcommitである．
+これはinput_yes_or_no()がNOの場合はtime_consuming_computation()を実行結果をabortし，
+また，input_yes_or_not()がYESの場合はtime_consuming_computation()の実行結果をcommitする．

@@ -1,0 +1,15 @@
+{
+	"folders": [
+		{
+			"name": "zeroMake4",
+			"path": "."
+		},
+		{
+			"path": "../gmo/gmo_data"
+		},
+		{
+			"path": "../gmo_drl"
+		}
+	],
+	"settings": {}
+}
