@@ -3,13 +3,14 @@ if '__file__' in globals():
     sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 import gym
 import matplotlib.pyplot as plt
 import numpy as np
 from torchviz import make_dot
-import math
 import torch.distributions as dist
+from torch.distributions import Normal
 import os
 
 # 現在のスクリプトの絶対パスを取得
@@ -32,22 +33,21 @@ path = os.path.join(directory_path,filename)
 # Define the Policy network using PyTorch
 class Policy(nn.Module):
 
-    def __init__(self, input_size, hidden_size, action_size):
+    def __init__(self, input_size = 3, hidden_size = 128, action_size = 1):
         super(Policy, self).__init__()
         self.l1 = nn.Linear(input_size, hidden_size)
-        self.l2 = nn.Linear(hidden_size, action_size)
-        self.l3 = nn.Linear(hidden_size, 1)  # For 0~1 output
-        self.softmax = nn.Softmax(dim=1)
-    
-    def forward(self, x):
-        x = torch.relu(self.l1(x))
+        self.l2 = nn.Linear(hidden_size, hidden_size)
+        self.mean_layer = nn.Linear(hidden_size, 1)  # Output layer for the mean (mu)
+        self.std_layer = nn.Linear(hidden_size, 1)   # Output layer for the std (sigma)
         
-        # action_probs = self.softmax(self.l2(x))  # 0~1 because of Softmax
-        action_probs = torch.sigmoid(self.l2(x))  # 0~1 because of Sigmoid
-        # bounded_output = torch.sigmoid(self.l3(x))  # 0~1 because of Sigmoid
-        scaled_output = torch.tanh(self.l3(x)) * 2  # -2~2 because of Tanh and scaling
-
-        return action_probs, scaled_output
+    def forward(self, x):
+        x = F.relu(self.l1(x))
+        x = F.relu(self.l2(x))
+        
+        mean = self.mean_layer(x)
+        std_dev = F.softplus(self.std_layer(x))  # Ensure that std_dev is positive
+        
+        return mean, std_dev
     
 # from torchsummary import summary
 # summary(Policy,(1,3,128,1))
@@ -61,44 +61,27 @@ class Agent:
         self.policy = Policy(input_size, hidden_size, action_size)
         self.optimizer = optim.Adam(self.policy.parameters(), lr=self.lr)
 
-    
 
-    # def get_action(self, state):
-    #     if isinstance(state, tuple):
-    #         state = state[0]
-    #     state = torch.tensor(state[np.newaxis, :], dtype=torch.float32)
-    #     action_mean = self.policy(state)
-    #     action_mean = action_mean.squeeze()
- 
-    #     # Using PyTorch's distributions to sample from the normal distribution and compute log probability
-    #     normal_distribution = dist.Normal(action_mean, 1.0)  # squeeze to match the shape
-    #     sampling_action_tensor = torch.clamp(normal_distribution.sample(), min=-2.0, max=2.0)
-    #     sampling_action = sampling_action_tensor.squeeze()
-    #     print(action_mean, sampling_action)
-    #     log_probability = normal_distribution.log_prob(action_mean)
-    #     log_probability = log_probability.unsqueeze(0).unsqueeze(0)
-    #     return sampling_action, log_probability
-    
-    # policyの返り値は0~1
     def get_action(self, state):
         if isinstance(state, tuple):
             state = state[0]
         state = torch.tensor(state[np.newaxis, :], dtype=torch.float32)
-        action_prob, action = self.policy(state)
-        return action, action_prob
+        mean, std_dev = self.policy.forward(state)
 
-    # def get_action(self, state, epsilon=0.1):
-    #     if isinstance(state, tuple):
-    #         state = state[0]
-    #     state = torch.tensor(state[np.newaxis, :], dtype=torch.float32)
-        
-    #     # With probability epsilon, choose a random action
-    #     if random.random() < epsilon:
-    #         return random.choice(self.action_space), None  # Assuming self.action_space is defined
-        
-    #     # Otherwise, choose the action based on the current policy
-    #     action_prob, action = self.policy(state)
-    #     return action, action_prob
+        # Create a normal distribution parameterized by mean and std_dev
+        normal_distribution = Normal(mean, std_dev)
+
+        # Sample an action from the normal distribution
+        action = normal_distribution.sample()
+
+        # Clip the action to be within the allowed range [-2, 2]
+        action = torch.clamp(action, min=-2, max=2)
+
+        # Calculate the log probability of the action
+        log_prob = normal_distribution.log_prob(action)
+
+        return action, log_prob
+
 
         
     def add(self, reward, prob):
@@ -113,8 +96,8 @@ class Agent:
             G = r + self.gamma * G
             # Calculate the loss
             # _debug = torch.log(prob)
-            policy_loss += -torch.log(prob).unsqueeze(0) * G
-            # policy_loss += - prob * G
+            # policy_loss += -torch.log(prob).unsqueeze(0) * G
+            policy_loss += - prob * G
 
         if is_debugging:
             # 計算グラフを表示
@@ -126,80 +109,48 @@ class Agent:
         self.optimizer.step()
         self.memory = []
 
+if __name__ == '__main__':
 
-# Initialize the environment and the agent
-env = gym.make('Pendulum-v1', render_mode = 'human')
-agent = Agent(3, 128, 1)
-done = False
-reward_history = []
+    # Initialize the environment and the agent
+    env = gym.make('Pendulum-v1', render_mode = 'human')
+    agent = Agent(3, 128, 1)
+    done = False
+    reward_history = []
 
+    num_state = env.observation_space.shape
+    num_action = env.action_space.shape
+    max_steps = env.spec.max_episode_steps
 
+    max_episode = 500
 
-# step_counter = 0
+    for episode in range(max_episode):
+        state = env.reset()
+        total_reward = 0
 
-num_state = env.observation_space.shape
-num_action = env.action_space.shape
-max_steps = env.spec.max_episode_steps
+        for step in range(max_steps):
+            action, prob = agent.get_action(state)
+            step_results = env.step([action.item()])
+            # print(step_results)
+            next_state, reward, done, _, info = step_results
+            if done == True:
+                break
 
-max_episode = 100
+            # print(action, prob)
+            agent.add(reward, prob)
+            state = next_state
+            total_reward += reward
 
-for episode in range(max_episode):
-    state = env.reset()
-    total_reward = 0
-
-    for step in range(max_steps):
-        action, prob = agent.get_action(state)
-        step_results = env.step([action.item()])
-        # print(step_results)
-        next_state, reward, done, _, info = step_results
-        if done == True:
-            break
-
-        print(action, prob)
-        agent.add(reward, prob)
-        state = next_state
-        total_reward += reward
-
-    episode += 1
-    
-    print(f"Episode: {episode}, Accumulated Reward: {total_reward}")
-
-    agent.update()
-    reward_history.append(total_reward)
+        episode += 1
         
+        print(f"Episode: {episode}, Accumulated Reward: {total_reward}")
 
-# while not done:
-
-#     state = env.reset()
-#     done = False
-#     total_reward = 0
-
-#     for i in range(10):
-#         action, prob = agent.get_action(state)
-#         step_results = env.step([action])
-#         # print(step_results)
-#         next_state, reward, done, _, info = step_results
-#         if done == True:
-#             break
-
-#         # print(reward, done)
-#         agent.add(reward, prob)
-#         state = next_state
-#         total_reward += reward
-
-#         step_counter += 1
-        
-#     print(f"Steps: {step_counter}, Accumulated Reward: {total_reward}")
-#     # total_reward = 0  # reset the accumulated reward
-
-#     agent.update()
-#     reward_history.append(total_reward)
+        agent.update()
+        reward_history.append(total_reward)
 
 
-
-# plot_reward_history(reward_history)
-from common.utils import plot_total_reward
-plot_total_reward(reward_history)
+    # plot_reward_history(reward_history)
+    from common.utils import plot_total_reward
+    plot_total_reward(reward_history)
 
 
 # https://chat.openai.com/c/18fb68f3-e7d4-4870-a22e-756c1861328a
