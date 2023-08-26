@@ -7,6 +7,23 @@ import torch.optim as optim
 import gym
 import matplotlib.pyplot as plt
 import numpy as np
+from torchviz import make_dot
+import os
+
+# 現在のスクリプトの絶対パスを取得
+absolute_path = os.path.abspath(__file__)
+
+# 現在のスクリプトのディレクトリを取得
+directory_path = os.path.dirname(absolute_path)
+
+# 現在のスクリプトのファイル名を取得
+filename = os.path.basename(absolute_path)
+
+# print(directory_path, filename)
+# print(filename.replace('.py','_py'))
+
+# VSCodeでデバッグモードかどうかを判定
+is_debugging = os.environ.get('PYTHONDEBUG') is not None
 
 # Define the Policy network using PyTorch
 class Policy(nn.Module):
@@ -54,12 +71,19 @@ class Agent:
             # _debug = torch.log(prob)
             policy_loss += -torch.log(prob).unsqueeze(0) * G
 
+        
         self.optimizer.zero_grad()
         policy_loss.backward()
         self.optimizer.step()
+
+        # print(policy_loss)
+        if is_debugging:
+            img = make_dot(policy_loss, params=dict(self.policy.named_parameters()))
+            img.view(filename=filename.replace('.py','_py'), directory=directory_path)
+
         self.memory = []
 
-    # def update(self):
+    # def update(self): 改善前 for文に無駄がある
     #     G = 0
     #     policy_loss = []
     #     returns = []
@@ -80,7 +104,7 @@ class Agent:
 
 # Initialize the environment and the agent
 env = gym.make('CartPole-v0', render_mode = 'human')
-agent = Agent(4, 128, 2)
+agent = Agent(4, 10, 2)
 episodes = 3000
 reward_history = []
 
